@@ -11,9 +11,12 @@
  */
 
 #pragma once
+#include <algorithm>
+#include <vector>
 #ifndef MEMORY_HPP
 #define MEMORY_HPP
 
+#include <array>
 #include <cstdlib>
 #include <type_traits>
 
@@ -73,37 +76,76 @@ template <typename DT> inline void freeC(DT ***array) {
   }
 }
 
-template <int dim, typename T> struct pointer_n {
+template <typename T, int dim> struct pointer_n {
   static_assert(dim < 4, "dimension must be smaller than 4");
   static_assert(dim > 0, "dimension must be greater than 0");
-
   typedef T type;
 };
 
-template <typename T> struct pointer_n<1, T> { typedef T *type; };
+template <typename T> struct pointer_n<T, 1> { typedef T *type; };
 
-template <typename T> struct pointer_n<2, T> { typedef T **type; };
+template <typename T> struct pointer_n<T, 2> { typedef T **type; };
 
-template <typename T> struct pointer_n<3, T> { typedef T ***type; };
+template <typename T> struct pointer_n<T, 3> { typedef T ***type; };
 
-template <std::size_t dim, typename T>
-using pointer_n_t = typename pointer_n<dim, T>::type;
+template <typename T, std::size_t dim>
+using pointer_n_t = typename pointer_n<T, dim>::type;
 
-template <int dim, typename T, typename U = int> class SmartArray {
+template <typename DT, int dim>
+pointer_n_t<DT, dim> createC(std::array<int, dim> shape) {
+  if constexpr (dim == 1) {
+    return createC<DT>(shape[0]);
+  }
+  if constexpr (dim == 2) {
+    return createC<DT>(shape[0], shape[1]);
+  }
+  if constexpr (dim == 3) {
+    return createC<DT>(shape[0], shape[1], shape[2]);
+  }
+  return nullptr;
+}
+
+template <typename T, int dim>
+void copyC(pointer_n_t<T, dim> a, pointer_n_t<T, dim> b, int size) {
+  if constexpr (dim == 1) {
+    for (int i = 0; i < size; ++i) {
+      b[i] = a[i];
+    }
+    // std::copy(a, a + size, b);
+  }
+  if constexpr (dim == 2) {
+    for (int i = 0; i < size; ++i) {
+      *(*b + i) = *(*a + i);
+    }
+    // std::copy(*a, *a + size, b);
+  }
+  if constexpr (dim == 3) {
+    for (int i = 0; i < size; ++i) {
+      *(**b + i) = *(**a + i);
+    }
+    // std::copy(**a, **a + size, b);
+  }
+}
+
+template <typename T, int dim, typename U = int> class SmartArray {
 public:
-  typedef pointer_n_t<dim, T> pointer_type;
-  typedef pointer_n_t<dim - 1, T> value_type;
+  typedef pointer_n_t<T, dim> pointer_type;
+  typedef pointer_n_t<T, dim - 1> value_type;
   pointer_type data = nullptr;
+  std::array<int, dim> shape;
 
 public:
-  SmartArray() : data(nullptr) {}
+  SmartArray() : data(nullptr) { shape.fill(0); }
 
   template <typename... Tail>
   explicit SmartArray(
       typename std::enable_if<sizeof...(Tail) + 1 == dim, T>::type head,
-      Tail... tail) {
+      Tail... tail)
+      : shape{U(head), U(tail)...} {
     data = createC<T>(head, U(tail)...);
   }
+
+  decltype(shape) get_shape() const { return shape; }
 
   // Constructor/Assignment that allows move semantics
   SmartArray(SmartArray &&other) noexcept { other.swap(*this); }
@@ -114,15 +156,40 @@ public:
 
   // Constructor/Assignment that binds to nullptr
   // This makes usage with nullptr cleaner
-  SmartArray(std::nullptr_t) : data(nullptr) {}
+  SmartArray(std::nullptr_t) : data(nullptr) { shape.fill(0); }
   SmartArray &operator=(std::nullptr_t) {
     reset();
     return *this;
   }
 
   // Remove compiler generated copy semantics.
-  SmartArray(SmartArray const &) = delete;
-  SmartArray &operator=(SmartArray const &) = delete;
+  SmartArray(SmartArray const &other) {
+    if (other.shape[0] == 0) {
+      shape.fill(0);
+      data = nullptr;
+    } else {
+      shape = other.shape;
+      data = createC<T, dim>(shape);
+      copyC<T, dim>(other.data, data, other.size());
+    }
+  }
+  SmartArray &operator=(SmartArray const &other) {
+    if (other == this) {
+      return *this;
+    }
+    if (shape[0] != 0)
+      freeC(data);
+    if (other.shape[0] == 0) {
+      shape.fill(0);
+      data = nullptr;
+    } else {
+      shape = other.shape;
+      shape = other.shape;
+      data = createC<T, dim>(shape);
+      copyC<T, dim>(other.data, data, other.size());
+    }
+    return *this;
+  }
 
   // Const correct access owned object
   value_type &operator*() const { return *data; }
@@ -138,11 +205,23 @@ public:
     return result;
   }
 
-  void swap(SmartArray &other) noexcept { std::swap(data, other.data); }
+  void swap(SmartArray &other) noexcept {
+    std::swap(data, other.data);
+    std::swap(shape, other.shape);
+  }
 
   void reset() {
     freeC(data);
     data = nullptr;
+    shape.fill(0);
+  }
+
+  int size() const {
+    int size = 1;
+    for (int i = 0; i < shape.size(); ++i) {
+      size *= shape[i];
+    }
+    return size;
   }
 
   ~SmartArray() { freeC(data); }
@@ -150,8 +229,8 @@ public:
   value_type &operator[](std::size_t index) { return data[index]; }
 };
 
-template <int dim, typename T, typename U = int>
-void swap(SmartArray<dim, T> &lhs, SmartArray<dim, T> &rhs) {
+template <typename T, int dim>
+void swap(SmartArray<T, dim> &lhs, SmartArray<T, dim> &rhs) {
   lhs.swap(rhs);
 }
 
