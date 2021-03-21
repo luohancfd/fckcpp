@@ -142,7 +142,11 @@ public:
       typename std::enable_if<sizeof...(Tail) + 1 == dim, T>::type head,
       Tail... tail)
       : shape{U(head), U(tail)...} {
+    if (size() > 0) {
     data = createC<T>(head, U(tail)...);
+    } else {
+      data = nullptr;
+    }
   }
 
   decltype(shape) get_shape() const { return shape; }

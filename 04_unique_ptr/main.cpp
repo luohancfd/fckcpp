@@ -74,4 +74,11 @@ int main() {
       std::cout << std::endl;
     }
   }
+  Memory::SmartArray<double, 2> k(0,0);
+  if (k) {
+    std::cout << "k is allocated" << std::endl;
+  } else {
+    std::cout << "k is not allocated" << std::endl;
+  }
+
 }
